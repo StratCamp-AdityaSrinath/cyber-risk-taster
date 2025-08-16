@@ -82,84 +82,84 @@ def compute_beta_params(mean_val, min_val, max_val):
     alpha = max(alpha, 0.5); beta = max(beta, 0.5)
     return alpha, beta
 
-def run_simulation(naics, employee_size, deductible, selected_services):
-    N_ITERATIONS = 1000
-    cyber_data = pd.read_csv(StringIO(CYBER_DATA_STRING))
+# This is the new handler for all requests.
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>', methods=['GET', 'POST'])
+def catch_all(path):
+    if request.method == 'POST':
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request. Please send a JSON body."}), 400
 
-    # Filter data based on user selections
-    filtered_data = cyber_data[
-        (cyber_data['NAICS'] == naics) &
-        (cyber_data['Service_Code'].isin(selected_services))
-    ].copy()
+        naics = data.get('naics')
+        employee_size = data.get('employee_size')
+        deductible = data.get('deductible')
+        selected_services = data.get('selected_services')
 
-    if filtered_data.empty:
-        return {"error": "No data available for the selected industry and services."}
+        if not all([naics, employee_size, deductible is not None, selected_services]):
+            return jsonify({"error": "Missing one or more required parameters: naics, employee_size, deductible, selected_services"}), 400
 
-    # Pre-compute distribution parameters
-    for metric in ['Event_Freq', 'Uptake_Prob', 'Cost']:
-        if metric == 'Cost':
-            filtered_data[f'{metric}_Min'] = filtered_data[metric] * 0.7
-            filtered_data[f'{metric}_Max'] = filtered_data[metric] * 2.0
-        else:
-            filtered_data[f'{metric}_Min'] = filtered_data[metric] * 0.6
-            filtered_data[f'{metric}_Max'] = filtered_data[metric] * 1.4
-    filtered_data['Uptake_Prob_Min'] = filtered_data['Uptake_Prob_Min'].clip(0, 1)
-    filtered_data['Uptake_Prob_Max'] = filtered_data['Uptake_Prob_Max'].clip(0, 1)
+        # --- Simulation Logic ---
+        N_ITERATIONS = 1000
+        cyber_data = pd.read_csv(StringIO(CYBER_DATA_STRING))
 
-    for metric in ['Event_Freq', 'Cost']:
-        params = np.array([compute_lognormal_params(r[f'{metric}'], r[f'{metric}_Min'], r[f'{metric}_Max']) for _, r in filtered_data.iterrows()])
-        if params.size > 0:
-            filtered_data[f'{metric}_mu'] = params[:, 0]
-            filtered_data[f'{metric}_sigma'] = params[:, 1]
+        filtered_data = cyber_data[
+            (cyber_data['NAICS'] == int(naics)) &
+            (cyber_data['Service_Code'].isin(selected_services))
+        ].copy()
 
-    beta_params = np.array([compute_beta_params(r['Uptake_Prob'], r['Uptake_Prob_Min'], r['Uptake_Prob_Max']) for _, r in filtered_data.iterrows()])
-    if beta_params.size > 0:
-        filtered_data['Uptake_Prob_alpha'] = beta_params[:, 0]
-        filtered_data['Uptake_Prob_beta'] = beta_params[:, 1]
+        if filtered_data.empty:
+            return jsonify({"error": "No data available for the selected industry and services."})
 
-    # --- Simulation Logic ---
-    size_scaling_factor = EMPLOYEE_SIZE_SCALING_FACTORS.get(employee_size, 1.0)
-    simulated_loss_per_firm = np.zeros(N_ITERATIONS)
+        for metric in ['Event_Freq', 'Uptake_Prob', 'Cost']:
+            if metric == 'Cost':
+                filtered_data[f'{metric}_Min'] = filtered_data[metric] * 0.7
+                filtered_data[f'{metric}_Max'] = filtered_data[metric] * 2.0
+            else:
+                filtered_data[f'{metric}_Min'] = filtered_data[metric] * 0.6
+                filtered_data[f'{metric}_Max'] = filtered_data[metric] * 1.4
+        filtered_data['Uptake_Prob_Min'] = filtered_data['Uptake_Prob_Min'].clip(0, 1)
+        filtered_data['Uptake_Prob_Max'] = filtered_data['Uptake_Prob_Max'].clip(0, 1)
 
-    for _, service_params in filtered_data.iterrows():
-        scaled_freq_mean = service_params['Event_Freq'] * size_scaling_factor
-        n_events = np.random.poisson(scaled_freq_mean, size=N_ITERATIONS)
-        beta_sample = np.random.beta(service_params['Uptake_Prob_alpha'], service_params['Uptake_Prob_beta'], size=N_ITERATIONS)
-        sampled_uptake_prob = service_params['Uptake_Prob_Min'] + beta_sample * (service_params['Uptake_Prob_Max'] - service_params['Uptake_Prob_Min'])
-        sampled_cost = np.random.lognormal(service_params['Cost_mu'], service_params['Cost_sigma'], size=N_ITERATIONS)
-        service_loss = n_events * sampled_uptake_prob * sampled_cost
-        simulated_loss_per_firm += service_loss
+        for metric in ['Event_Freq', 'Cost']:
+            params = np.array([compute_lognormal_params(r[f'{metric}'], r[f'{metric}_Min'], r[f'{metric}_Max']) for _, r in filtered_data.iterrows()])
+            if params.size > 0:
+                filtered_data[f'{metric}_mu'] = params[:, 0]
+                filtered_data[f'{metric}_sigma'] = params[:, 1]
 
-    catastrophic_loads = np.array([sample_catastrophic_load() for _ in range(N_ITERATIONS)])
-    loaded_simulated_loss = simulated_loss_per_firm * (1 + catastrophic_loads)
-    simulated_premium = np.maximum(0, loaded_simulated_loss - deductible)
+        beta_params = np.array([compute_beta_params(r['Uptake_Prob'], r['Uptake_Prob_Min'], r['Uptake_Prob_Max']) for _, r in filtered_data.iterrows()])
+        if beta_params.size > 0:
+            filtered_data['Uptake_Prob_alpha'] = beta_params[:, 0]
+            filtered_data['Uptake_Prob_beta'] = beta_params[:, 1]
 
-    # --- Calculate and Format Results ---
-    mean_premium = simulated_premium.mean()
-    std_dev_premium = simulated_premium.std(ddof=1)
-    max_premium = simulated_premium.max()
-    cv = (std_dev_premium / mean_premium) if mean_premium > 0 else 0
-    max_mean_ratio = (max_premium / mean_premium) if mean_premium > 0 else 0
+        size_scaling_factor = EMPLOYEE_SIZE_SCALING_FACTORS.get(employee_size, 1.0)
+        simulated_loss_per_firm = np.zeros(N_ITERATIONS)
 
-    return {
-        "mean_premium": f"${mean_premium:,.2f}",
-        "volatility_cv": f"{cv:.1%}",
-        "max_to_mean_ratio": f"{max_mean_ratio:.2f}x"
-    }
+        for _, service_params in filtered_data.iterrows():
+            scaled_freq_mean = service_params['Event_Freq'] * size_scaling_factor
+            n_events = np.random.poisson(scaled_freq_mean, size=N_ITERATIONS)
+            beta_sample = np.random.beta(service_params['Uptake_Prob_alpha'], service_params['Uptake_Prob_beta'], size=N_ITERATIONS)
+            sampled_uptake_prob = service_params['Uptake_Prob_Min'] + beta_sample * (service_params['Uptake_Prob_Max'] - service_params['Uptake_Prob_Min'])
+            sampled_cost = np.random.lognormal(service_params['Cost_mu'], service_params['Cost_sigma'], size=N_ITERATIONS)
+            service_loss = n_events * sampled_uptake_prob * sampled_cost
+            simulated_loss_per_firm += service_loss
 
-@app.route('/api/main', methods=['POST'])
-def handle_simulation():
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid request. Please send a JSON body."}), 400
+        catastrophic_loads = np.array([sample_catastrophic_load() for _ in range(N_ITERATIONS)])
+        loaded_simulated_loss = simulated_loss_per_firm * (1 + catastrophic_loads)
+        simulated_premium = np.maximum(0, loaded_simulated_loss - int(deductible))
 
-    naics = data.get('naics')
-    employee_size = data.get('employee_size')
-    deductible = data.get('deductible')
-    selected_services = data.get('selected_services')
+        mean_premium = simulated_premium.mean()
+        std_dev_premium = simulated_premium.std(ddof=1)
+        max_premium = simulated_premium.max()
+        cv = (std_dev_premium / mean_premium) if mean_premium > 0 else 0
+        max_mean_ratio = (max_premium / mean_premium) if mean_premium > 0 else 0
 
-    if not all([naics, employee_size, deductible is not None, selected_services]):
-        return jsonify({"error": "Missing one or more required parameters: naics, employee_size, deductible, selected_services"}), 400
+        results = {
+            "mean_premium": f"${mean_premium:,.2f}",
+            "volatility_cv": f"{cv:.1%}",
+            "max_to_mean_ratio": f"{max_mean_ratio:.2f}x"
+        }
+        return jsonify(results)
 
-    results = run_simulation(int(naics), employee_size, int(deductible), selected_services)
-    return jsonify(results)
+    # This will handle the direct browser access (GET request)
+    return jsonify({"status": "ok", "message": "API is running. Please use a POST request to get simulation results."})
