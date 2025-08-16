@@ -9,13 +9,13 @@ import os
 # --- 1. SET UP THE FASTAPI APP ---
 app = FastAPI()
 
-# --- 2. DEFINE DATA MODELS FOR INPUT/OUTPUT ---
+# --- 2. UPDATED DATA MODELS FOR INPUT/OUTPUT ---
 class SimulationInput(BaseModel):
     year: int = 2026
     industry_naics: int
     employee_size: str
     deductible: int
-    selected_events: list[str]
+    selected_services: dict[str, list[str]]
 
 class SimulationOutput(BaseModel):
     pure_premium_mean: float
@@ -48,6 +48,7 @@ except FileNotFoundError:
 
 
 # --- 4. CONFIGURATION ---
+# Set back to 1000 as requested. See important note below.
 N_ITERATIONS = 1000
 EMPLOYEE_SIZE_SCALING_FACTORS = {
     "<5": 0.1, "5-9": 0.2, "10-14": 0.35, "15-19": 0.5, "20-24": 0.65,
@@ -67,20 +68,30 @@ def sample_catastrophic_load():
     else:
         return 0.05
 
-# --- 5. THE MAIN API ENDPOINT ---
+# --- 5. THE MAIN API ENDPOINT (UPDATED LOGIC) ---
 @app.post("/api/simulate", response_model=SimulationOutput)
 def run_simulation(inputs: SimulationInput):
     if df_cyber is None:
         return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="Server data not loaded.")
 
-    mask = (
-        (df_cyber['Industry NAICS'] == inputs.industry_naics) &
-        (df_cyber['Code'].isin(inputs.selected_events))
-    )
-    sim_data = df_cyber[mask]
+    conditions = []
+    for event_code, services in inputs.selected_services.items():
+        if services:
+            condition = (
+                (df_cyber['Code'] == event_code) & 
+                (df_cyber['Remedial Service Type'].isin(services))
+            )
+            conditions.append(condition)
+
+    if not conditions:
+        return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="No remedial services selected.")
+
+    combined_conditions = pd.concat(conditions, axis=1).any(axis=1)
+    industry_condition = (df_cyber['Industry NAICS'] == inputs.industry_naics)
+    sim_data = df_cyber[combined_conditions & industry_condition]
     
     if sim_data.empty:
-        return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="No valid events for this industry.")
+        return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="No valid data for the selected industry and services.")
 
     size_scaling_factor = EMPLOYEE_SIZE_SCALING_FACTORS.get(inputs.employee_size, 1.0)
     simulated_loss_per_firm = np.zeros(N_ITERATIONS)
