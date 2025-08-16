@@ -11,43 +11,25 @@ CORS(app)
 
 # --- DATA: Converted from your Excel file ---
 CYBER_DATA_STRING = """
-NAICS,Employee_Size,Event_Code,Service_Code,Event_Freq,Uptake_Prob,Cost
-52,10-14,EVT001,SVC001,0.15,0.8,75000
-52,10-14,EVT001,SVC002,0.15,0.6,120000
-52,10-14,EVT002,SVC003,0.05,0.9,250000
-52,10-14,EVT002,SVC004,0.05,0.5,150000
-54,10-14,EVT001,SVC001,0.12,0.85,70000
-54,10-14,EVT001,SVC002,0.12,0.65,110000
-54,10-14,EVT003,SVC005,0.08,0.7,300000
-61,10-14,EVT001,SVC001,0.08,0.75,65000
-61,10-14,EVT004,SVC006,0.1,0.8,180000
-62,10-14,EVT002,SVC003,0.06,0.95,260000
-62,10-14,EVT002,SVC004,0.06,0.55,160000
-62,10-14,EVT005,SVC007,0.02,0.9,500000
-22,10-14,EVT003,SVC005,0.09,0.75,320000
-22,10-14,EVT006,SVC008,0.03,0.85,450000
-23,10-14,EVT001,SVC001,0.07,0.7,60000
-23,10-14,EVT006,SVC008,0.04,0.8,400000
-51,10-14,EVT002,SVC003,0.07,0.9,270000
-51,10-14,EVT005,SVC007,0.03,0.88,550000
-52,100-149,EVT001,SVC001,0.25,0.85,95000
-52,100-149,EVT001,SVC002,0.25,0.65,150000
-52,100-149,EVT002,SVC003,0.1,0.95,350000
-52,100-149,EVT002,SVC004,0.1,0.55,200000
-54,100-149,EVT001,SVC001,0.2,0.9,90000
-54,100-149,EVT001,SVC002,0.2,0.7,140000
-54,100-149,EVT003,SVC005,0.12,0.75,400000
-61,100-149,EVT001,SVC001,0.15,0.8,85000
-61,100-149,EVT004,SVC006,0.18,0.85,220000
-62,100-149,EVT002,SVC003,0.11,0.98,370000
-62,100-149,EVT002,SVC004,0.11,0.6,220000
-62,100-149,EVT005,SVC007,0.04,0.95,700000
-22,100-149,EVT003,SVC005,0.14,0.8,420000
-22,100-149,EVT006,SVC008,0.06,0.9,600000
-23,100-149,EVT001,SVC001,0.12,0.75,80000
-23,100-149,EVT006,SVC008,0.07,0.85,550000
-51,100-149,EVT002,SVC003,0.13,0.92,380000
-51,100-149,EVT005,SVC007,0.05,0.9,750000
+NAICS,Event_Code,Service_Code,Event_Freq,Uptake_Prob,Cost
+52,EVT001,SVC001,0.15,0.8,75000
+52,EVT001,SVC002,0.15,0.6,120000
+52,EVT002,SVC003,0.05,0.9,250000
+52,EVT002,SVC004,0.05,0.5,150000
+54,EVT001,SVC001,0.12,0.85,70000
+54,EVT001,SVC002,0.12,0.65,110000
+54,EVT003,SVC005,0.08,0.7,300000
+61,EVT001,SVC001,0.08,0.75,65000
+61,EVT004,SVC006,0.1,0.8,180000
+62,EVT002,SVC003,0.06,0.95,260000
+62,EVT002,SVC004,0.06,0.55,160000
+62,EVT005,SVC007,0.02,0.9,500000
+22,EVT003,SVC005,0.09,0.75,320000
+22,EVT006,SVC008,0.03,0.85,450000
+23,EVT001,SVC001,0.07,0.7,60000
+23,EVT006,SVC008,0.04,0.8,400000
+51,EVT002,SVC003,0.07,0.9,270000
+51,EVT005,SVC007,0.03,0.88,550000
 """
 
 EMPLOYEE_SIZE_SCALING_FACTORS = {
@@ -111,7 +93,7 @@ def run_simulation(naics, employee_size, deductible, selected_services):
     ].copy()
 
     if filtered_data.empty:
-        return {"error": "No data available for the selected criteria."}
+        return {"error": "No data available for the selected industry and services."}
 
     # Pre-compute distribution parameters
     for metric in ['Event_Freq', 'Uptake_Prob', 'Cost']:
@@ -138,13 +120,9 @@ def run_simulation(naics, employee_size, deductible, selected_services):
     # --- Simulation Logic ---
     size_scaling_factor = EMPLOYEE_SIZE_SCALING_FACTORS.get(employee_size, 1.0)
     simulated_loss_per_firm = np.zeros(N_ITERATIONS)
-    analytical_loss_cost = 0
 
     for _, service_params in filtered_data.iterrows():
         scaled_freq_mean = service_params['Event_Freq'] * size_scaling_factor
-        expected_cost_per_service = scaled_freq_mean * service_params['Uptake_Prob'] * service_params['Cost']
-        analytical_loss_cost += expected_cost_per_service
-
         n_events = np.random.poisson(scaled_freq_mean, size=N_ITERATIONS)
         beta_sample = np.random.beta(service_params['Uptake_Prob_alpha'], service_params['Uptake_Prob_beta'], size=N_ITERATIONS)
         sampled_uptake_prob = service_params['Uptake_Prob_Min'] + beta_sample * (service_params['Uptake_Prob_Max'] - service_params['Uptake_Prob_Min'])
