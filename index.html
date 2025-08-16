@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Risk Taster Model</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-gray-900">Cyber Risk Pure Premium Model (Taster)</h1>
+            <p class="text-lg text-gray-600 mt-2">Simulate the financial impact of high-cost cyber remedial services.</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-1 bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold mb-6 border-b pb-3">Simulation Controls</h2>
+                <div class="space-y-6">
+                    <div>
+                        <label for="naics_select" class="block text-lg font-semibold text-gray-700">Industry (NAICS)</label>
+                        <select id="naics_select" class="w-full mt-1 p-2 border border-gray-300 rounded-md">
+                            </select>
+                    </div>
+                    <div>
+                        <label for="employee_size_select" class="block text-lg font-semibold text-gray-700">Firm Size (Employees)</label>
+                        <select id="employee_size_select" class="w-full mt-1 p-2 border border-gray-300 rounded-md">
+                            </select>
+                    </div>
+                    <div>
+                        <label for="deductible" class="block text-lg font-semibold text-gray-700">Per-Business Deductible ($<span id="deductible_value">50,000</span>)</label>
+                        <input type="range" id="deductible" min="0" max="250000" step="25000" value="50000" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                </div>
+
+                <div class="mt-8">
+                    <h3 class="text-xl font-bold mb-4">Adverse Events & Remedial Services</h3>
+                    <div id="event-selection" class="space-y-2 border rounded-lg p-2">
+                        </div>
+                </div>
+
+                <div class="mt-8 text-center">
+                    <button id="run-simulation" class="w-full bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition duration-300 text-lg shadow-md">
+                        <i class="fas fa-play mr-2"></i>Run Simulation
+                    </button>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold mb-6 border-b pb-3">Simulation Results</h2>
+                <div id="results-container" class="text-center">
+                     <div class="flex justify-center items-center h-full hidden" id="loader-container">
+                         <div class="loader"></div>
+                         <p class="ml-4 text-gray-600 font-semibold">Running Simulation...</p>
+                     </div>
+                    <div id="results-summary">
+                         <p class="text-gray-500">Adjust controls and click "Run Simulation" to see results.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- Data Definitions ---
+        const naicsData = {
+            52: "Finance and Insurance",
+            54: "Professional, Scientific, and Technical Services",
+            51: "Information",
+            62: "Health Care and Social Assistance",
+            22: "Utilities",
+            23: "Construction",
+            61: "Educational Services",
+            72: "Accommodation and Food Services"
+        };
+
+        const employeeSizeData = [
+            "<5", "5-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39", "40-49",
+            "50-74", "75-99", "100-149", "150-199", "200-299", "300-399", "400-499",
+            "500-749", "750-999", "1,000-1,499", "1,500-1,999", "2,000-2,499",
+            "2,500-4,999", "5,000+"
+        ];
+
+        const eventData = {
+            "EVT001": {
+                name: "Ransomware Attack",
+                services: {
+                    "SVC001": "Ransom Payment & Negotiation",
+                    "SVC002": "System Restoration & Data Recovery"
+                }
+            },
+            "EVT002": {
+                name: "Data Breach (PII)",
+                services: {
+                    "SVC003": "Forensic Investigation & Reporting",
+                    "SVC004": "Credit Monitoring for Affected Individuals"
+                }
+            },
+            "EVT003": {
+                name: "Business Email Compromise",
+                services: {
+                    "SVC005": "Fund Recovery & Legal Action"
+                }
+            },
+            "EVT004": {
+                name: "Denial-of-Service (DDoS) Attack",
+                services: {
+                    "SVC006": "DDoS Mitigation & Traffic Scrubbing"
+                }
+            },
+            "EVT005": {
+                name: "Insider Threat",
+                services: {
+                    "SVC007": "Internal Investigation & Legal Counsel"
+                }
+            },
+            "EVT006": {
+                name: "Cloud Misconfiguration",
+                services: {
+                    "SVC008": "Cloud Security Audit & Remediation"
+                }
+            }
+        };
+
+        // --- Frontend Setup ---
+        function setupFrontend() {
+            // Populate dropdowns
+            const naicsSelect = document.getElementById('naics_select');
+            Object.entries(naicsData).forEach(([code, name]) => {
+                naicsSelect.innerHTML += `<option value="${code}">${name} (${code})</option>`;
+            });
+
+            const employeeSizeSelect = document.getElementById('employee_size_select');
+            employeeSizeData.forEach(size => {
+                employeeSizeSelect.innerHTML += `<option value="${size}">${size}</option>`;
+            });
+            employeeSizeSelect.value = "100-149"; // Default value
+
+            // Populate event/service selection
+            const eventSelectionDiv = document.getElementById('event-selection');
+            Object.entries(eventData).forEach(([eventCode, eventDetails]) => {
+                const eventItem = document.createElement('div');
+                eventItem.className = 'event-item border-b border-gray-200';
+                eventItem.dataset.eventCode = eventCode;
+
+                let servicesHtml = '';
+                Object.entries(eventDetails.services).forEach(([serviceCode, serviceName]) => {
+                    servicesHtml += `
+                        <div class="p-2">
+                            <label class="flex items-center">
+                                <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 service-checkbox" data-service-code="${serviceCode}" checked>
+                                <span class="ml-2 text-sm text-gray-700">${serviceName}</span>
+                            </label>
+                        </div>
+                    `;
+                });
+
+                eventItem.innerHTML = `
+                    <div class="flex items-center p-2 cursor-pointer accordion-header">
+                        <span class="font-medium text-gray-800">${eventDetails.name}</span>
+                        <i class="fas fa-chevron-down ml-auto transition-transform"></i>
+                    </div>
+                    <div class="accordion-content pl-4 bg-gray-50 rounded-b-lg">
+                        ${servicesHtml}
+                    </div>
+                `;
+                eventSelectionDiv.appendChild(eventItem);
+            });
+
+            // Add event listeners
+            document.getElementById('run-simulation').addEventListener('click', handleRunSimulation);
+            document.querySelectorAll('.accordion-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const content = header.nextElementSibling;
+                    const icon = header.querySelector('i');
+                    if (content.style.maxHeight) {
+                        content.style.maxHeight = null;
+                        icon.style.transform = 'rotate(0deg)';
+                    } else {
+                        content.style.maxHeight = content.scrollHeight + "px";
+                        icon.style.transform = 'rotate(180deg)';
+                    }
+                });
+            });
+
+            const deductibleSlider = document.getElementById('deductible');
+            const deductibleValueSpan = document.getElementById('deductible_value');
+            deductibleSlider.addEventListener('input', () => {
+                deductibleValueSpan.innerText = parseInt(deductibleSlider.value).toLocaleString();
+            });
+        }
+
+        // --- Simulation Logic ---
+        async function handleRunSimulation() {
+            document.getElementById('loader-container').classList.remove('hidden');
+            document.getElementById('results-summary').innerHTML = "";
+
+            const requestData = {
+                naics: document.getElementById('naics_select').value,
+                employee_size: document.getElementById('employee_size_select').value,
+                deductible: parseInt(document.getElementById('deductible').value),
+                selected_services: Array.from(document.querySelectorAll('.service-checkbox:checked'))
+                                         .map(cb => cb.dataset.serviceCode)
+            };
+
+            if (requestData.selected_services.length === 0) {
+                displayError("Please select at least one remedial service.");
+                return;
+            }
+            
+            console.log("Sending to backend:", requestData);
+
+            try {
+                const response = await fetch('/api/main', { // Vercel handles the URL
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData)
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+                const results = await response.json();
+                displayResults(results);
+            } catch (error) {
+                displayError(`Error: ${error.message}`);
+            } finally {
+                document.getElementById('loader-container').classList.add('hidden');
+            }
+        }
+
+        function displayResults(results) {
+            const resultsDiv = document.getElementById('results-summary');
+            if (results.error) {
+                resultsDiv.innerHTML = `<p class="text-red-500 font-bold">${results.error}</p>`;
+                return;
+            }
+            resultsDiv.innerHTML = `
+                <div class="overflow-x-auto">
+                    <table class="min-w-full bg-white border border-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Metric</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <tr>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Mean Annual Pure Premium</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 text-center font-mono">${results.mean_premium}</td>
+                            </tr>
+                            <tr>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Volatility (CV)</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 text-center font-mono">${results.volatility_cv}</td>
+                            </tr>
+                            <tr>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Max-to-Mean Ratio</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 text-center font-mono">${results.max_to_mean_ratio}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        function displayError(message) {
+             const resultsDiv = document.getElementById("results-summary");
+             resultsDiv.innerHTML = `<p class="text-red-600 font-bold">${message}</p>`;
+             document.getElementById('loader-container').classList.add('hidden');
+        }
+
+        document.addEventListener("DOMContentLoaded", setupFrontend);
+    </script>
+</body>
+</html>
