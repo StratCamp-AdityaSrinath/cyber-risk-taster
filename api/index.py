@@ -9,7 +9,7 @@ import os
 # --- 1. SET UP THE FASTAPI APP ---
 app = FastAPI()
 
-# --- 2. UPDATED DATA MODELS FOR INPUT/OUTPUT ---
+# --- 2. UPDATED DATA MODELS ---
 class SimulationInput(BaseModel):
     year: int = 2026
     industry_naics: int
@@ -23,32 +23,14 @@ class SimulationOutput(BaseModel):
     var_99: float
     error: str | None = None
 
-# --- 3. LOAD AND PRE-PROCESS DATA ONCE ---
-DATA_PATH = os.path.join(os.path.dirname(__file__), '..', 'data')
+# --- 3. LOAD THE PRE-PROCESSED DATA (MUCH FASTER!) ---
+DATA_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'preprocessed_data.parquet')
 try:
-    df_attributes = pd.read_csv(os.path.join(DATA_PATH, 'attributes.csv'))
-    
-    id_vars = ['Code', 'Event Name', 'Remedial Service Type', 'Industry NAICS']
-    value_vars = [c for c in df_attributes.columns if '2026' in c]
-    df_long = pd.melt(df_attributes, id_vars=id_vars, value_vars=value_vars, var_name='Metric_Year', value_name='Value')
-    df_long[['Metric', 'Year']] = df_long['Metric_Year'].str.rsplit('_', n=1, expand=True)
-    
-    df_cyber = df_long.pivot_table(
-        index=['Industry NAICS', 'Code', 'Event Name', 'Remedial Service Type'],
-        columns='Metric',
-        values='Value'
-    ).reset_index()
-
-    df_cyber['Cost_mu'] = np.log(df_cyber['Cost']) - (0.3**2 / 2)
-    df_cyber['Cost_sigma'] = 0.3
-    
-except FileNotFoundError:
+    df_cyber = pd.read_parquet(DATA_FILE)
+except Exception:
     df_cyber = None
-    print("ERROR: Data files not found.")
-
 
 # --- 4. CONFIGURATION ---
-# Set back to 1000 as requested. See important note below.
 N_ITERATIONS = 1000
 EMPLOYEE_SIZE_SCALING_FACTORS = {
     "<5": 0.1, "5-9": 0.2, "10-14": 0.35, "15-19": 0.5, "20-24": 0.65,
@@ -68,18 +50,21 @@ def sample_catastrophic_load():
     else:
         return 0.05
 
-# --- 5. THE MAIN API ENDPOINT (UPDATED LOGIC) ---
+# --- 5. THE MAIN API ENDPOINT ---
 @app.post("/api/simulate", response_model=SimulationOutput)
 def run_simulation(inputs: SimulationInput):
     if df_cyber is None:
         return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="Server data not loaded.")
 
+    # Filter the pre-processed data
+    year_data = df_cyber[df_cyber['Year'] == inputs.year]
+
     conditions = []
     for event_code, services in inputs.selected_services.items():
         if services:
             condition = (
-                (df_cyber['Code'] == event_code) & 
-                (df_cyber['Remedial Service Type'].isin(services))
+                (year_data['Code'] == event_code) & 
+                (year_data['Remedial Service Type'].isin(services))
             )
             conditions.append(condition)
 
@@ -87,8 +72,8 @@ def run_simulation(inputs: SimulationInput):
         return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="No remedial services selected.")
 
     combined_conditions = pd.concat(conditions, axis=1).any(axis=1)
-    industry_condition = (df_cyber['Industry NAICS'] == inputs.industry_naics)
-    sim_data = df_cyber[combined_conditions & industry_condition]
+    industry_condition = (year_data['Industry NAICS'] == inputs.industry_naics)
+    sim_data = year_data[combined_conditions & industry_condition]
     
     if sim_data.empty:
         return SimulationOutput(pure_premium_mean=0, var_95=0, var_99=0, error="No valid data for the selected industry and services.")
